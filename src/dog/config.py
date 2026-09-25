@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import os
-import tomllib
+import sys
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 DEFAULT_CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "dog" / "config.toml"
 

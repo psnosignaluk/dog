@@ -39,6 +39,10 @@ A note on payload size: the resolver also limits how much it will send over UDP.
 
 ## Development
 
+Supports Python 3.10 and later. Development uses the version pinned in `.python-version`.
+
 ```sh
 uv run pytest
+# check every supported version:
+for v in 3.10 3.11 3.12 3.13 3.14; do uv run --isolated --python $v pytest -q; done
 ```
