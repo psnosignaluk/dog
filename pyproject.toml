@@ -1,0 +1,26 @@
+[project]
+name = "dog"
+version = "0.1.0"
+description = "dig + ipinfo.io over UDP-only DNS with EDNS(0)"
+readme = "README.md"
+authors = [
+    { name = "Paul Stevens", email = "ps@theblackwall.uk" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "dnspython>=2.8.0",
+    "httpx>=0.28.1",
+]
+
+[project.scripts]
+dog = "dog:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "respx>=0.23.1",
+]
