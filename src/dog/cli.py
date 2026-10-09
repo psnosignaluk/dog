@@ -57,11 +57,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         except dns.exception.DNSException as exc:
             parser.error(f"invalid domain name {args.target!r}: {exc}")
 
-    args.server = None
+    # Every @server is kept, in order; the resolver tries them in turn.
+    args.servers = []
     args.types = []
     for item in args.extra:
         if item.startswith("@"):
-            args.server = item[1:]
+            args.servers.append(item[1:])
             continue
         rdtype = item.upper()
         try:
@@ -69,14 +70,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         except dns.rdatatype.UnknownRdatatype:
             parser.error(f"unknown record type: {item}")
         args.types.append(rdtype)
-    if args.server and not is_ip(args.server):
-        parser.error(f"@server must be an IP address, got {args.server}")
+    for server in args.servers:
+        if not is_ip(server):
+            parser.error(f"@server must be an IP address, got {server!r}")
     return args
 
 
-def resolve_nameservers(cfg: configmod.Config, server: str | None) -> tuple[list[str], str]:
-    if server:
-        return [server], "command line"
+def resolve_nameservers(cfg: configmod.Config, servers: list[str]) -> tuple[list[str], str]:
+    if servers:
+        return servers, "command line"
     if cfg.nameservers:
         return cfg.nameservers, "config"
     return detect_nameservers()
@@ -102,7 +104,7 @@ class Report:
 
 
 def run(args: argparse.Namespace, cfg: configmod.Config) -> Report:
-    nameservers, source = resolve_nameservers(cfg, args.server)
+    nameservers, source = resolve_nameservers(cfg, args.servers)
     resolver = UdpResolver(cfg, nameservers)
 
     if is_ip(args.target) and not args.types:
@@ -166,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = configmod.build(args.config, overrides)
         if args.show_resolver:
-            nameservers, source = resolve_nameservers(cfg, args.server)
+            nameservers, source = resolve_nameservers(cfg, args.servers)
             print(f"{', '.join(nameservers)} (from {source})")
             return 0
         report = run(args, cfg)
