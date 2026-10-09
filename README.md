@@ -15,7 +15,7 @@ uv run dog example.com --json
 
 ## Resolver detection
 
-Nameservers are chosen in this order: `@server` on the command line, `nameservers` in the config file or `$DOG_NAMESERVERS`, then the system resolver. The system resolver is read from `/etc/resolv.conf`, or from `scutil --dns` on macOS if that file is empty.
+Nameservers are chosen in this order: `@server` on the command line (repeat it, as in `@1.1.1.1 @8.8.8.8`, to try several in turn), `nameservers` in the config file or `$DOG_NAMESERVERS`, then the system resolver. The system resolver is read from `/etc/resolv.conf`, or from `scutil --dns` on macOS if that file is empty.
 
 ## Configuration
 
