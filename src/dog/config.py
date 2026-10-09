@@ -43,6 +43,23 @@ def _is_ip(value: object) -> bool:
     return True
 
 
+# The types each Config field accepts, and how to describe them in an error.
+# Values from TOML and the environment arrive untyped, so validate() checks them
+# against this. bool is a subclass of int, so a bool is only accepted where bool
+# is listed: port = true is rejected, while timeout = 2 (an int) is fine.
+FIELD_TYPES: dict[str, tuple[tuple[type, ...], str]] = {
+    "nameservers": ((list,), "a list of IP addresses"),
+    "port": ((int,), "an integer"),
+    "payload": ((int,), "an integer"),
+    "edns": ((bool,), "true or false"),
+    "dnssec": ((bool,), "true or false"),
+    "timeout": ((int, float), "a number"),
+    "retries": ((int,), "an integer"),
+    "ipinfo": ((bool,), "true or false"),
+    "ipinfo_token": ((str, type(None)), "a string"),
+}
+
+
 @dataclass
 class Config:
     # Empty means "use the system's local resolver".
@@ -59,32 +76,20 @@ class Config:
     ipinfo_token: str | None = None
 
     def validate(self) -> None:
-        # Values from TOML and the environment arrive untyped. bool is a subclass
-        # of int, so it is ruled out explicitly wherever a number is expected.
-        for name in ("port", "payload", "retries"):
+        for name, (types, description) in FIELD_TYPES.items():
             value = getattr(self, name)
-            if not isinstance(value, int) or isinstance(value, bool):
-                raise ConfigError(f"{name} must be an integer, got {value!r}")
-        for name in ("edns", "dnssec", "ipinfo"):
-            value = getattr(self, name)
-            if not isinstance(value, bool):
-                raise ConfigError(f"{name} must be true or false, got {value!r}")
-        if not isinstance(self.timeout, (int, float)) or isinstance(self.timeout, bool):
-            raise ConfigError(f"timeout must be a number, got {self.timeout!r}")
-        if not math.isfinite(self.timeout):
-            raise ConfigError(f"timeout must be finite, got {self.timeout!r}")
-        if self.ipinfo_token is not None and not isinstance(self.ipinfo_token, str):
-            raise ConfigError(f"ipinfo_token must be a string, got {self.ipinfo_token!r}")
-        if not isinstance(self.nameservers, list):
-            raise ConfigError(f"nameservers must be a list of IP addresses, got {self.nameservers!r}")
+            if not isinstance(value, types) or (isinstance(value, bool) and bool not in types):
+                raise ConfigError(f"{name} must be {description}, got {value!r}")
+
         for server in self.nameservers:
             if not _is_ip(server):
                 raise ConfigError(f"nameservers must be IP addresses, got {server!r}")
-
         if not MIN_PAYLOAD <= self.payload <= MAX_PAYLOAD:
             raise ConfigError(f"payload must be between {MIN_PAYLOAD} and {MAX_PAYLOAD}, got {self.payload}")
         if not 0 < self.port < 65536:
             raise ConfigError(f"invalid port: {self.port}")
+        if not math.isfinite(self.timeout):
+            raise ConfigError(f"timeout must be finite, got {self.timeout!r}")
         if self.timeout <= 0:
             raise ConfigError("timeout must be positive")
         if self.retries < 0:
