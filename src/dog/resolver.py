@@ -12,7 +12,7 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 
 import dns.exception
 import dns.flags
@@ -63,9 +63,6 @@ class QueryResult:
     def ok(self) -> bool:
         return self.status == "NOERROR"
 
-    def to_dict(self) -> dict:
-        return asdict(self)
-
 
 def is_ip(value: str) -> bool:
     try:
@@ -89,10 +86,10 @@ def _scutil_nameservers() -> list[str]:
 def detect_nameservers() -> tuple[list[str], str]:
     """Find the local resolver(s). Returns (nameservers, where they came from)."""
     try:
-        servers = dns.resolver.Resolver(configure=True).nameservers
+        configured = dns.resolver.Resolver(configure=True).nameservers
     except dns.resolver.NoResolverConfiguration:
-        servers = []
-    servers = [str(s) for s in servers]
+        configured = []
+    servers = [str(s) for s in configured]
     if servers:
         return servers, "/etc/resolv.conf"
     if sys.platform == "darwin" and (servers := _scutil_nameservers()):
@@ -114,12 +111,12 @@ def exchange(query: dns.message.Message, server: str, port: int, timeout: float)
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise dns.exception.Timeout()
+                raise dns.exception.Timeout
             sock.settimeout(remaining)
             try:
                 data, addr = sock.recvfrom(MAX_DATAGRAM)
             except TimeoutError:
-                raise dns.exception.Timeout() from None
+                raise dns.exception.Timeout from None
             # Ignore stray datagrams from other hosts or for other queries.
             if not _same_host(addr[0], server):
                 continue

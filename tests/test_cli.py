@@ -1,0 +1,259 @@
+"""Golden tests: pin the exact text and JSON output of main()."""
+
+import json
+
+import pytest
+
+from dog import cli, ipinfo
+from dog.resolver import EdnsInfo, QueryResult, Record
+
+SERVER = "192.0.2.53"
+
+RESULTS = {
+    ("example.com", "A"): QueryResult(
+        "example.com",
+        "A",
+        "NOERROR",
+        server=SERVER,
+        records=[
+            Record("example.com.", 300, "A", "1.1.1.1"),
+            Record("example.com.", 300, "A", "10.0.0.1"),
+        ],
+        size=72,
+        edns=EdnsInfo(version=0, server_payload=1232, do=False),
+    ),
+    ("example.com", "AAAA"): QueryResult("example.com", "AAAA", "TIMEOUT", server=SERVER, error="query timed out"),
+    ("example.com", "MX"): QueryResult(
+        "example.com",
+        "MX",
+        "NOERROR",
+        server=SERVER,
+        records=[
+            Record("example.com.", 3600, "MX", "10 mail.example.com."),
+            Record("example.com.", 3600, "MX", "20 backup-mail.example.com."),
+        ],
+        truncated=True,
+        size=512,
+        edns=EdnsInfo(version=0, server_payload=4096, do=True),
+        error="response truncated (TC set) and TCP fallback is disabled; the answer exceeds what 192.0.2.53 will send over UDP",
+    ),
+    ("1.1.1.1.in-addr.arpa.", "PTR"): QueryResult(
+        "1.1.1.1.in-addr.arpa.",
+        "PTR",
+        "NOERROR",
+        server=SERVER,
+        records=[Record("1.1.1.1.in-addr.arpa.", 1800, "PTR", "one.one.one.one.")],
+        size=78,
+    ),
+    ("nope.example", "A"): QueryResult("nope.example", "A", "TIMEOUT", error="no response"),
+}
+
+IPINFO = {
+    "1.1.1.1": {"ip": "1.1.1.1", "org": "AS13335 Cloudflare, Inc.", "city": "Sydney", "country": "AU", "hostname": "one.one.one.one"},
+    "10.0.0.1": {"ip": "10.0.0.1", "bogon": True},
+    "8.8.8.8": {"ip": "8.8.8.8", "error": "HTTP 429"},
+}
+
+
+class FakeResolver:
+    def __init__(self, config, nameservers):
+        self.config = config
+        self.nameservers = nameservers
+
+    def query(self, qname, rdtype):
+        return RESULTS[(qname, rdtype)]
+
+    def reverse(self, ip):
+        return RESULTS[(".".join(reversed(ip.split("."))) + ".in-addr.arpa.", "PTR")]
+
+
+@pytest.fixture(autouse=True)
+def fakes(monkeypatch):
+    for var in ("IPINFO_TOKEN", "DOG_NAMESERVERS", "DOG_PAYLOAD"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(cli, "UdpResolver", FakeResolver)
+    monkeypatch.setattr(cli, "detect_nameservers", lambda: (["127.0.0.53"], "/etc/resolv.conf"))
+    lookups = []
+
+    def fake_lookup(ips, token=None, timeout=10.0):
+        lookups.append(list(ips))
+        return {ip: IPINFO[ip] for ip in ips if ip in IPINFO}
+
+    monkeypatch.setattr(ipinfo, "lookup", fake_lookup)
+    return lookups
+
+
+@pytest.fixture
+def run_main(tmp_path, capsys):
+    def run(*argv, config=None):
+        path = tmp_path / "config.toml"
+        if config is not None:
+            path.write_text(config)
+        code = cli.main(["--config", str(path), *argv])
+        return code, capsys.readouterr().out
+    return run
+
+
+FORWARD_TEXT = """\
+; <<>> dog <<>> example.com
+;; RESOLVERS: 192.0.2.53 (from command line)
+;; TRANSPORT: UDP only, EDNS0 payload 4096
+
+;; example.com A: NOERROR from 192.0.2.53, 72 bytes, server EDNS payload 1232
+example.com.  300  IN  A  1.1.1.1
+example.com.  300  IN  A  10.0.0.1
+
+;; example.com AAAA: TIMEOUT from 192.0.2.53
+;; WARNING: query timed out
+
+;; IPINFO
+1.1.1.1   AS13335 Cloudflare, Inc. | Sydney, AU | host one.one.one.one
+10.0.0.1  bogon (private/reserved address)
+"""
+
+
+def test_forward_text(run_main, fakes):
+    assert run_main("example.com", "@" + SERVER) == (0, FORWARD_TEXT)
+    assert fakes == [["1.1.1.1", "10.0.0.1"]]
+
+
+FORWARD_JSON = {
+    "target": "example.com",
+    "nameservers": ["192.0.2.53"],
+    "nameserver_source": "command line",
+    "transport": "udp",
+    "edns_payload": 4096,
+    "queries": [
+        {
+            "qname": "example.com",
+            "rdtype": "A",
+            "status": "NOERROR",
+            "server": "192.0.2.53",
+            "records": [
+                {"name": "example.com.", "ttl": 300, "rdtype": "A", "value": "1.1.1.1"},
+                {"name": "example.com.", "ttl": 300, "rdtype": "A", "value": "10.0.0.1"},
+            ],
+            "truncated": False,
+            "size": 72,
+            "edns": {"version": 0, "server_payload": 1232, "do": False},
+            "error": None,
+        },
+        {
+            "qname": "example.com",
+            "rdtype": "AAAA",
+            "status": "TIMEOUT",
+            "server": "192.0.2.53",
+            "records": [],
+            "truncated": False,
+            "size": None,
+            "edns": None,
+            "error": "query timed out",
+        },
+    ],
+    "ipinfo": {
+        "1.1.1.1": {"ip": "1.1.1.1", "org": "AS13335 Cloudflare, Inc.", "city": "Sydney", "country": "AU", "hostname": "one.one.one.one"},
+        "10.0.0.1": {"ip": "10.0.0.1", "bogon": True},
+    },
+}
+
+
+def test_forward_json(run_main):
+    code, out = run_main("example.com", "@" + SERVER, "--json")
+    assert code == 0
+    assert out == json.dumps(FORWARD_JSON, indent=2) + "\n"  # exact bytes, including key order
+
+
+TRUNCATED_TEXT = """\
+; <<>> dog <<>> example.com
+;; RESOLVERS: 127.0.0.53 (from /etc/resolv.conf)
+;; TRANSPORT: UDP only, EDNS0 payload 4096
+
+;; example.com MX: NOERROR from 192.0.2.53, 512 bytes, server EDNS payload 4096, DO
+;; WARNING: response truncated (TC set) and TCP fallback is disabled; the answer exceeds what 192.0.2.53 will send over UDP
+example.com.  3600  IN  MX  10 mail.example.com.
+example.com.  3600  IN  MX  20 backup-mail.example.com.
+"""
+
+
+def test_truncated_text_with_detected_resolver(run_main, fakes):
+    assert run_main("example.com", "mx") == (0, TRUNCATED_TEXT)
+    assert fakes == [[]]  # no addresses, but ipinfo is still consulted
+
+
+REVERSE_TEXT = """\
+; <<>> dog <<>> 1.1.1.1
+;; RESOLVERS: 192.0.2.53, 192.0.2.54 (from config)
+;; TRANSPORT: UDP only, no EDNS
+
+;; 1.1.1.1.in-addr.arpa. PTR: NOERROR from 192.0.2.53, 78 bytes
+1.1.1.1.in-addr.arpa.  1800  IN  PTR  one.one.one.one.
+"""
+
+
+def test_reverse_text_no_edns_no_ipinfo(run_main, fakes):
+    config = 'nameservers = ["192.0.2.53", "192.0.2.54"]\n'
+    assert run_main("1.1.1.1", "--no-edns", "--no-ipinfo", config=config) == (0, REVERSE_TEXT)
+    assert fakes == []
+
+
+def test_reverse_json_no_edns(run_main):
+    code, out = run_main("1.1.1.1", "@" + SERVER, "--no-edns", "--json")
+    assert code == 0
+    report = json.loads(out)
+    assert report["edns_payload"] is None
+    assert report["ipinfo"] == {"1.1.1.1": IPINFO["1.1.1.1"]}
+    assert [q["rdtype"] for q in report["queries"]] == ["PTR"]
+
+
+FAILED_TEXT = """\
+; <<>> dog <<>> nope.example
+;; RESOLVERS: 192.0.2.53 (from command line)
+;; TRANSPORT: UDP only, EDNS0 payload 1232
+
+;; nope.example A: TIMEOUT
+;; WARNING: no response
+"""
+
+
+def test_all_failed_exits_1(run_main):
+    assert run_main("nope.example", "A", "@" + SERVER, "--payload", "1232") == (1, FAILED_TEXT)
+
+
+def test_all_failed_json(run_main):
+    code, out = run_main("nope.example", "A", "@" + SERVER, "--json")
+    assert code == 1
+    assert json.loads(out)["queries"] == [
+        {
+            "qname": "nope.example",
+            "rdtype": "A",
+            "status": "TIMEOUT",
+            "server": None,
+            "records": [],
+            "truncated": False,
+            "size": None,
+            "edns": None,
+            "error": "no response",
+        }
+    ]
+
+
+def test_ipinfo_error_text(run_main, monkeypatch):
+    result = QueryResult(
+        "dns.example", "A", "NOERROR", server=SERVER, records=[Record("dns.example.", 60, "A", "8.8.8.8")], size=45
+    )
+    monkeypatch.setitem(RESULTS, ("dns.example", "A"), result)
+    code, out = run_main("dns.example", "A", "@" + SERVER)
+    assert code == 0
+    assert out.endswith(";; IPINFO\n8.8.8.8  error: HTTP 429\n")
+
+
+@pytest.mark.parametrize(
+    "argv, config, expected",
+    [
+        (["--show-resolver"], None, "127.0.0.53 (from /etc/resolv.conf)\n"),
+        (["--show-resolver", "x", "@" + SERVER], None, "192.0.2.53 (from command line)\n"),
+        (["--show-resolver"], 'nameservers = ["192.0.2.9"]\n', "192.0.2.9 (from config)\n"),
+    ],
+)
+def test_show_resolver(run_main, argv, config, expected):
+    assert run_main(*argv, config=config) == (0, expected)

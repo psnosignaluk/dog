@@ -5,13 +5,18 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
+import dns.exception
+import dns.name
 import dns.rdatatype
 
 from . import config as configmod
 from . import ipinfo
-from .resolver import NoResolverFound, UdpResolver, addresses, detect_nameservers, is_ip
+from .ipinfo import Info
+from .resolver import NoResolverFound, QueryResult, UdpResolver, addresses, detect_nameservers, is_ip
 
 DEFAULT_TYPES = ["A", "AAAA"]
 
@@ -29,7 +34,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="TYPE|@SERVER",
         help=f"record types (default: {' '.join(DEFAULT_TYPES)}) and/or @nameserver, as with dig",
     )
-    parser.add_argument("--config", type=Path, help=f"config file (default: {configmod.DEFAULT_CONFIG_PATH})")
+    parser.add_argument("--config", type=Path, help=f"config file (default: {configmod.default_config_path()})")
     parser.add_argument("--payload", type=int, help="EDNS UDP payload size to advertise (default: 4096)")
     parser.add_argument("--no-edns", dest="edns", action="store_const", const=False, help="send plain DNS queries")
     parser.add_argument("--dnssec", action="store_const", const=True, help="set the EDNS DO bit")
@@ -44,6 +49,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     if not args.target and not args.show_resolver:
         parser.error("a target is required")
+    if args.target and not is_ip(args.target):
+        try:
+            dns.name.from_text(args.target)
+        except dns.exception.DNSException as exc:
+            parser.error(f"invalid domain name {args.target!r}: {exc}")
 
     args.server = None
     args.types = []
@@ -70,7 +80,26 @@ def resolve_nameservers(cfg: configmod.Config, server: str | None) -> tuple[list
     return detect_nameservers()
 
 
-def run(args: argparse.Namespace, cfg: configmod.Config) -> dict:
+@dataclass(kw_only=True)
+class Report:
+    target: str
+    nameservers: list[str]
+    nameserver_source: str
+    transport: str = "udp"
+    edns_payload: int | None
+    queries: list[QueryResult]
+    ipinfo: dict[str, Info]
+
+    @property
+    def ok(self) -> bool:
+        return any(q.ok for q in self.queries)
+
+    def to_dict(self) -> dict[str, Any]:
+        # Field order is the JSON key order.
+        return asdict(self)
+
+
+def run(args: argparse.Namespace, cfg: configmod.Config) -> Report:
     nameservers, source = resolve_nameservers(cfg, args.server)
     resolver = UdpResolver(cfg, nameservers)
 
@@ -82,49 +111,48 @@ def run(args: argparse.Namespace, cfg: configmod.Config) -> dict:
         ips = addresses(results)
 
     info = ipinfo.lookup(ips, cfg.ipinfo_token) if cfg.ipinfo else {}
-    return {
-        "target": args.target,
-        "nameservers": nameservers,
-        "nameserver_source": source,
-        "transport": "udp",
-        "edns_payload": cfg.payload if cfg.edns else None,
-        "queries": [r.to_dict() for r in results],
-        "ipinfo": info,
-    }
+    return Report(
+        target=args.target,
+        nameservers=nameservers,
+        nameserver_source=source,
+        edns_payload=cfg.payload if cfg.edns else None,
+        queries=results,
+        ipinfo=info,
+    )
 
 
-def render_text(report: dict) -> str:
-    edns = f"EDNS0 payload {report['edns_payload']}" if report["edns_payload"] else "no EDNS"
+def render_text(report: Report) -> str:
+    edns = f"EDNS0 payload {report.edns_payload}" if report.edns_payload else "no EDNS"
     lines = [
-        f"; <<>> dog <<>> {report['target']}",
-        f";; RESOLVERS: {', '.join(report['nameservers'])} (from {report['nameserver_source']})",
+        f"; <<>> dog <<>> {report.target}",
+        f";; RESOLVERS: {', '.join(report.nameservers)} (from {report.nameserver_source})",
         f";; TRANSPORT: UDP only, {edns}",
     ]
-    for q in report["queries"]:
+    for q in report.queries:
         lines.append("")
-        header = f";; {q['qname']} {q['rdtype']}: {q['status']}"
-        if q["server"]:
-            header += f" from {q['server']}"
-        if q["size"] is not None:
-            header += f", {q['size']} bytes"
-        if e := q["edns"]:
-            header += f", server EDNS payload {e['server_payload']}" + (", DO" if e["do"] else "")
+        header = f";; {q.qname} {q.rdtype}: {q.status}"
+        if q.server:
+            header += f" from {q.server}"
+        if q.size is not None:
+            header += f", {q.size} bytes"
+        if e := q.edns:
+            header += f", server EDNS payload {e.server_payload}" + (", DO" if e.do else "")
         lines.append(header)
-        if q["error"]:
-            lines.append(f";; WARNING: {q['error']}")
-        records = q["records"]
+        if q.error:
+            lines.append(f";; WARNING: {q.error}")
+        records = q.records
         if not records:
             continue
-        name_w = max(len(r["name"]) for r in records)
-        ttl_w = max(len(str(r["ttl"])) for r in records)
-        type_w = max(len(r["rdtype"]) for r in records)
+        name_w = max(len(r.name) for r in records)
+        ttl_w = max(len(str(r.ttl)) for r in records)
+        type_w = max(len(r.rdtype) for r in records)
         for r in records:
-            lines.append(f"{r['name']:<{name_w}}  {r['ttl']:>{ttl_w}}  IN  {r['rdtype']:<{type_w}}  {r['value']}")
+            lines.append(f"{r.name:<{name_w}}  {r.ttl:>{ttl_w}}  IN  {r.rdtype:<{type_w}}  {r.value}")
 
-    if report["ipinfo"]:
+    if report.ipinfo:
         lines += ["", ";; IPINFO"]
-        ip_w = max(len(ip) for ip in report["ipinfo"])
-        for ip, info in report["ipinfo"].items():
+        ip_w = max(len(ip) for ip in report.ipinfo)
+        for ip, info in report.ipinfo.items():
             lines.append(f"{ip:<{ip_w}}  {ipinfo.summarise(info)}")
     return "\n".join(lines)
 
@@ -143,8 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"dog: {exc}", file=sys.stderr)
         return 2
 
-    print(json.dumps(report, indent=2) if args.json else render_text(report))
-    return 0 if any(q["status"] == "NOERROR" for q in report["queries"]) else 1
+    print(json.dumps(report.to_dict(), indent=2) if args.json else render_text(report))
+    return 0 if report.ok else 1
 
 
 if __name__ == "__main__":
