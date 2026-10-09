@@ -25,8 +25,22 @@ dev = [
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "respx>=0.23.1",
+    "ruff>=0.16.10",
 ]
 
 [tool.mypy]
 files = ["src"]
 strict = true
+
+[tool.ruff]
+target-version = "py310"
+# Matches the existing code; only affects import wrapping, as E501 isn't enabled.
+line-length = 140
+
+[tool.ruff.lint]
+# Ruff's defaults, plus:
+extend-select = [
+    "B905",     # zip() without strict=
+    "PLC0207",  # split() when only the first part is used
+    "PLR0912",  # too many branches
+]
