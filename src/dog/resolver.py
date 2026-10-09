@@ -204,7 +204,9 @@ class UdpResolver:
         return last
 
     def reverse(self, ip: str) -> QueryResult:
-        return self.query(dns.reversename.from_address(ip).to_text(), "PTR")
+        # Drop any IPv6 scope (fe80::1%lo): it names an interface, not part of the
+        # address, so the PTR name is the same, and from_address() rejects it.
+        return self.query(dns.reversename.from_address(ip.split("%")[0]).to_text(), "PTR")
 
 
 def addresses(results: list[QueryResult]) -> list[str]:
