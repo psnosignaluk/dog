@@ -66,9 +66,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             continue
         rdtype = item.upper()
         try:
-            dns.rdatatype.from_text(rdtype)
+            value = dns.rdatatype.from_text(rdtype)
         except dns.rdatatype.UnknownRdatatype:
             parser.error(f"unknown record type: {item}")
+        if value in (dns.rdatatype.AXFR, dns.rdatatype.IXFR):
+            parser.error(f"{item} is a zone transfer, which needs TCP; dog only uses UDP")
+        # Meta-types (OPT, TSIG, ...) are protocol mechanisms, not things to query
+        # for. ANY is one too, but it's a real query, so it's allowed.
+        if dns.rdatatype.is_metatype(value) and value != dns.rdatatype.ANY:
+            parser.error(f"{item} is a meta-type, not a record type you can query for")
         args.types.append(rdtype)
     for server in args.servers:
         if not is_ip(server):
