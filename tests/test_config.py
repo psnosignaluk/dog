@@ -1,3 +1,5 @@
+from dataclasses import fields
+
 import pytest
 
 from dog import cli, config
@@ -139,6 +141,13 @@ def test_env_nameservers_must_be_ips(tmp_path, monkeypatch, servers):
 def test_override_values_type_checked(tmp_path, overrides, option):
     with pytest.raises(config.ConfigError, match=rf"\b{option}\b"):
         config.build(tmp_path / "nope.toml", overrides)
+
+
+def test_every_config_field_has_a_type_check():
+    # No field is left out: nameservers is checked as a list here, and its
+    # entries are then checked as IP addresses separately in validate().
+    # Equality also catches a stale table entry for a field that no longer exists.
+    assert set(config.FIELD_TYPES) == {f.name for f in fields(config.Config)}
 
 
 def test_validate_directly():
