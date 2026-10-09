@@ -247,6 +247,46 @@ def test_ipinfo_error_text(run_main, monkeypatch):
     assert out.endswith(";; IPINFO\n8.8.8.8  error: HTTP 429\n")
 
 
+@pytest.fixture
+def built(monkeypatch):
+    """Capture the Config that main() builds."""
+    configs = []
+    real_build = cli.configmod.build
+
+    def build(path=None, overrides=None):
+        configs.append(real_build(path, overrides))
+        return configs[-1]
+
+    monkeypatch.setattr(cli.configmod, "build", build)
+    return configs
+
+
+@pytest.mark.parametrize(
+    "flags, option, value",
+    [
+        (["--payload", "1232"], "payload", 1232),
+        (["--no-edns"], "edns", False),
+        (["--dnssec"], "dnssec", True),
+        (["--port", "5353"], "port", 5353),
+        (["--timeout", "1.5"], "timeout", 1.5),
+        (["--retries", "0"], "retries", 0),
+        (["--no-ipinfo"], "ipinfo", False),
+        (["--token", "abc"], "ipinfo_token", "abc"),
+    ],
+)
+def test_flags_override_config(run_main, built, flags, option, value):
+    # The file sets a different value for each option, so the flag must win.
+    config = 'payload = 4000\nedns = true\ndnssec = false\nport = 53\ntimeout = 9.0\nretries = 5\nipinfo = true\nipinfo_token = "file"\n'
+    run_main("--show-resolver", *flags, config=config)
+    assert getattr(built[0], option) == value
+
+
+def test_unset_flags_leave_config_alone(run_main, built):
+    run_main("--show-resolver", config='payload = 4000\nnameservers = ["192.0.2.9"]\nipinfo_token = "file"\n')
+    cfg = built[0]
+    assert (cfg.payload, cfg.nameservers, cfg.ipinfo_token, cfg.edns, cfg.dnssec) == (4000, ["192.0.2.9"], "file", True, False)
+
+
 @pytest.mark.parametrize(
     "argv, config, expected",
     [
