@@ -282,6 +282,38 @@ def test_flags_override_config(run_main, built, flags, option, value):
     assert getattr(built[0], option) == value
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["1.1.1.1", "MX", "@192.0.2.53", "--json", "--payload", "1232"],
+        ["--json", "--payload", "1232", "1.1.1.1", "MX", "@192.0.2.53"],
+        # Positionals after options: rejected by parse_args() before Python 3.12.
+        ["1.1.1.1", "--json", "@192.0.2.53", "MX", "--payload", "1232"],
+        ["1.1.1.1", "--json", "--payload", "1232", "MX", "@192.0.2.53"],
+        ["--json", "1.1.1.1", "--payload", "1232", "@192.0.2.53", "mx"],
+    ],
+)
+def test_options_and_positionals_can_be_mixed(argv):
+    args = cli.parse_args(argv)
+    assert (args.target, args.types, args.server, args.json, args.payload) == ("1.1.1.1", ["MX"], "192.0.2.53", True, 1232)
+
+
+@pytest.mark.parametrize(
+    "argv, error",
+    [
+        (["example.com", "--json", "BOGUS"], "unknown record type: BOGUS"),
+        (["example.com", "--json", "@dns.google"], "@server must be an IP address"),
+        (["--json"], "a target is required"),
+        (["example.com", "--json", "--nope"], "unrecognized arguments: --nope"),
+    ],
+)
+def test_mixed_argument_errors(capsys, argv, error):
+    with pytest.raises(SystemExit) as exc:
+        cli.parse_args(argv)
+    assert exc.value.code == 2
+    assert error in capsys.readouterr().err
+
+
 def test_every_config_field_has_a_flag():
     args = cli.parse_args(["example.com"])
     missing = {f.name for f in fields(config.Config)} - set(vars(args)) - {"nameservers"}
