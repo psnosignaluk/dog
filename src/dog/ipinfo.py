@@ -39,7 +39,7 @@ async def _lookup_all(ips: list[str], token: str | None, timeout: float) -> dict
         headers["Authorization"] = f"Bearer {token}"
     async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=timeout) as client:
         results = await asyncio.gather(*(_lookup(client, ip) for ip in ips))
-    return dict(zip(ips, results))
+    return dict(zip(ips, results, strict=True))
 
 
 def is_bogon(ip: str) -> bool:
