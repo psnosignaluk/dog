@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -159,7 +159,8 @@ def render_text(report: Report) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    overrides = {k: getattr(args, k) for k in ("payload", "edns", "dnssec", "port", "timeout", "retries", "ipinfo", "ipinfo_token")}
+    # Any flag whose dest matches a Config field overrides it; unset flags are None and ignored.
+    overrides = {f.name: getattr(args, f.name) for f in fields(configmod.Config) if hasattr(args, f.name)}
     try:
         cfg = configmod.build(args.config, overrides)
         if args.show_resolver:
