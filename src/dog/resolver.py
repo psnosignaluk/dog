@@ -97,13 +97,18 @@ def detect_nameservers() -> tuple[list[str], str]:
     raise NoResolverFound("could not find a local resolver; set nameservers in the config or use @server")
 
 
+def _unscoped(ip: str) -> str:
+    """Drop an IPv6 scope (fe80::1%lo -> fe80::1). It names an interface, not part of the address."""
+    return ip.partition("%")[0]
+
+
 def _same_host(a: str, b: str) -> bool:
-    return ipaddress.ip_address(a.split("%")[0]) == ipaddress.ip_address(b.split("%")[0])
+    return ipaddress.ip_address(_unscoped(a)) == ipaddress.ip_address(_unscoped(b))
 
 
 def exchange(query: dns.message.Message, server: str, port: int, timeout: float) -> tuple[dns.message.Message, int]:
     """Send one query over UDP and wait for the matching response. Returns (response, wire size)."""
-    family = socket.AF_INET6 if ipaddress.ip_address(server.split("%")[0]).version == 6 else socket.AF_INET
+    family = socket.AF_INET6 if ipaddress.ip_address(_unscoped(server)).version == 6 else socket.AF_INET
     wire = query.to_wire()
     deadline = time.monotonic() + timeout
     with socket.socket(family, socket.SOCK_DGRAM) as sock:
@@ -204,9 +209,8 @@ class UdpResolver:
         return last
 
     def reverse(self, ip: str) -> QueryResult:
-        # Drop any IPv6 scope (fe80::1%lo): it names an interface, not part of the
-        # address, so the PTR name is the same, and from_address() rejects it.
-        return self.query(dns.reversename.from_address(ip.split("%")[0]).to_text(), "PTR")
+        # from_address() rejects a scope, and the PTR name is the same without it.
+        return self.query(dns.reversename.from_address(_unscoped(ip)).to_text(), "PTR")
 
 
 def addresses(results: list[QueryResult]) -> list[str]:

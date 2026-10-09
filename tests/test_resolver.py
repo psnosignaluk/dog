@@ -9,7 +9,7 @@ import pytest
 
 from dog import cli
 from dog.config import Config
-from dog.resolver import UdpResolver, addresses
+from dog.resolver import UdpResolver, _same_host, addresses
 
 
 class FakeServer:
@@ -136,3 +136,20 @@ def test_addresses_deduplicates():
         QueryResult("a.", "A", "NOERROR", records=[Record("b.", 1, "A", "192.0.2.1"), Record("b.", 1, "AAAA", "2001:db8::1")]),
     ]
     assert addresses(results) == ["192.0.2.1", "2001:db8::1"]
+
+
+@pytest.mark.parametrize(
+    "a, b, same",
+    [
+        ("127.0.0.1", "127.0.0.1", True),
+        ("127.0.0.1", "127.0.0.2", False),
+        ("fe80::1", "fe80:0::1", True),  # compared as addresses, not text
+        # Replies come back with a scope (or a different one); only the address counts.
+        ("fe80::1%lo", "fe80::1", True),
+        ("fe80::1", "fe80::1%en0", True),
+        ("fe80::1%lo", "fe80::1%en0", True),
+        ("fe80::1%lo", "fe80::2%lo", False),
+    ],
+)
+def test_same_host_ignores_scope(a, b, same):
+    assert _same_host(a, b) is same
