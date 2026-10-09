@@ -1,10 +1,11 @@
 """Golden tests: pin the exact text and JSON output of main()."""
 
 import json
+from dataclasses import fields
 
 import pytest
 
-from dog import cli, ipinfo
+from dog import cli, config, ipinfo
 from dog.resolver import EdnsInfo, QueryResult, Record
 
 SERVER = "192.0.2.53"
@@ -279,6 +280,12 @@ def test_flags_override_config(run_main, built, flags, option, value):
     config = 'payload = 4000\nedns = true\ndnssec = false\nport = 53\ntimeout = 9.0\nretries = 5\nipinfo = true\nipinfo_token = "file"\n'
     run_main("--show-resolver", *flags, config=config)
     assert getattr(built[0], option) == value
+
+
+def test_every_config_field_has_a_flag():
+    args = cli.parse_args(["example.com"])
+    missing = {f.name for f in fields(config.Config)} - set(vars(args)) - {"nameservers"}
+    assert not missing, f"Config fields with no CLI flag: {missing}"
 
 
 def test_unset_flags_leave_config_alone(run_main, built):
