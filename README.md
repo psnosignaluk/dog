@@ -35,6 +35,8 @@ ipinfo_token = ""     # or $IPINFO_TOKEN; optional, raises rate limits
 
 Environment variables: `IPINFO_TOKEN`, `DOG_NAMESERVERS` (comma-separated), `DOG_PAYLOAD`.
 
+Addresses that aren't publicly routable (private, loopback, link-local, multicast and other reserved ranges) are never sent to ipinfo.io; dog marks them as bogons locally instead.
+
 A note on payload size: the resolver also limits how much it will send over UDP. A bigger advertised buffer only helps up to that limit. Very large buffers also mean IP fragmentation, which some networks drop. 1232 is the widely recommended safe value, and 4096 is the default here.
 
 ## Development
