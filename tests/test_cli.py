@@ -295,7 +295,55 @@ def test_flags_override_config(run_main, built, flags, option, value):
 )
 def test_options_and_positionals_can_be_mixed(argv):
     args = cli.parse_args(argv)
-    assert (args.target, args.types, args.server, args.json, args.payload) == ("1.1.1.1", ["MX"], "192.0.2.53", True, 1232)
+    assert (args.target, args.types, args.servers, args.json, args.payload) == ("1.1.1.1", ["MX"], ["192.0.2.53"], True, 1232)
+
+
+@pytest.mark.parametrize(
+    "argv, servers",
+    [
+        (["example.com"], []),
+        (["example.com", "@192.0.2.53"], ["192.0.2.53"]),
+        (["example.com", "@192.0.2.53", "@192.0.2.54"], ["192.0.2.53", "192.0.2.54"]),
+        (["example.com", "@192.0.2.54", "MX", "--json", "@2001:db8::53"], ["192.0.2.54", "2001:db8::53"]),
+    ],
+)
+def test_every_at_server_is_kept_in_order(argv, servers):
+    assert cli.parse_args(argv).servers == servers
+
+
+def test_main_queries_every_at_server(run_main, monkeypatch):
+    seen = []
+
+    class Recording(FakeResolver):
+        def __init__(self, config, nameservers):
+            super().__init__(config, nameservers)
+            seen.append(nameservers)
+
+    monkeypatch.setattr(cli, "UdpResolver", Recording)
+    code, out = run_main("example.com", "@192.0.2.53", "@192.0.2.54", "--no-ipinfo", config='nameservers = ["192.0.2.9"]\n')
+    assert code == 0
+    assert seen == [["192.0.2.53", "192.0.2.54"]]  # both, in order, and they replace the config's list
+    assert ";; RESOLVERS: 192.0.2.53, 192.0.2.54 (from command line)\n" in out
+
+
+def test_show_resolver_lists_every_at_server(run_main):
+    assert run_main("--show-resolver", "x", "@192.0.2.53", "@192.0.2.54") == (0, "192.0.2.53, 192.0.2.54 (from command line)\n")
+
+
+@pytest.mark.parametrize(
+    "argv, error",
+    [
+        (["example.com", "@192.0.2.53", "@dns.google"], "@server must be an IP address, got 'dns.google'"),
+        (["example.com", "@dns.google", "@192.0.2.53"], "@server must be an IP address, got 'dns.google'"),
+        # A bare @ used to be ignored, falling back to the system resolver.
+        (["example.com", "@"], "@server must be an IP address, got ''"),
+    ],
+)
+def test_bad_at_server_is_rejected(capsys, argv, error):
+    with pytest.raises(SystemExit) as exc:
+        cli.parse_args(argv)
+    assert exc.value.code == 2
+    assert error in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
