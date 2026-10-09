@@ -362,6 +362,35 @@ def test_mixed_argument_errors(capsys, argv, error):
     assert error in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "rdtype, error",
+    [
+        ("OPT", "OPT is a meta-type, not a record type you can query for"),
+        ("opt", "opt is a meta-type"),
+        ("TYPE41", "TYPE41 is a meta-type"),  # OPT by number
+        ("TSIG", "TSIG is a meta-type"),
+        ("TKEY", "TKEY is a meta-type"),
+        ("MAILA", "MAILA is a meta-type"),
+        ("MAILB", "MAILB is a meta-type"),
+        ("TYPE128", "TYPE128 is a meta-type"),  # 128-255 is reserved for meta-types
+        ("TYPE240", "TYPE240 is a meta-type"),
+        ("AXFR", "AXFR is a zone transfer, which needs TCP; dog only uses UDP"),
+        ("ixfr", "ixfr is a zone transfer, which needs TCP"),
+    ],
+)
+def test_meta_types_are_rejected(capsys, rdtype, error):
+    with pytest.raises(SystemExit) as exc:
+        cli.parse_args(["example.com", rdtype])
+    assert exc.value.code == 2
+    assert error in capsys.readouterr().err
+
+
+# ANY is a meta-type too, but a real query that works over UDP, so it stays.
+@pytest.mark.parametrize("rdtype", ["ANY", "any", "A", "TYPE127", "TYPE256", "TYPE65535"])
+def test_queryable_types_are_accepted(rdtype):
+    assert cli.parse_args(["example.com", rdtype]).types == [rdtype.upper()]
+
+
 def test_every_config_field_has_a_flag():
     args = cli.parse_args(["example.com"])
     missing = {f.name for f in fields(config.Config)} - set(vars(args)) - {"nameservers"}
