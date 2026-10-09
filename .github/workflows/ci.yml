@@ -14,12 +14,18 @@ concurrency:
 
 jobs:
   test:
-    name: pytest + mypy (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    name: pytest + mypy (Python ${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          # dog is developed on macOS and has macOS-specific resolver detection.
+          - os: macos-latest
+            python: "3.14"
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0
@@ -28,13 +34,47 @@ jobs:
           python-version: ${{ matrix.python }}
           enable-cache: true
       - run: uv sync --locked
-      - run: uv run pytest
+      # Fails if coverage drops below fail_under in pyproject.toml.
+      - run: uv run pytest --cov
       # Per version: the tomli/tomllib import differs between 3.10 and 3.11+.
       - run: uv run mypy
+
+  lowest-deps:
+    name: pytest (oldest supported dependencies)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.10"
+      # Installs the lowest version of each direct dependency that pyproject.toml
+      # allows, so its lower bounds (e.g. dnspython>=2.8.0) stay true.
+      - run: uv sync --resolution lowest-direct
+      - run: uv run --no-sync pytest
+
+  package:
+    name: build and install
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.10"
+      - run: uv build
+      # Installs the wheel into a clean environment and runs the dog command,
+      # which the tests never do through the installed entry point.
+      - run: |
+          uv venv "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" dist/*.whl
+          "$RUNNER_TEMP/venv/bin/dog" --help
+          "$RUNNER_TEMP/venv/bin/dog" --show-resolver
 
   lint:
     name: ruff
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0
