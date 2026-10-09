@@ -3,9 +3,11 @@ import threading
 
 import dns.flags
 import dns.message
+import dns.reversename
 import dns.rrset
 import pytest
 
+from dog import cli
 from dog.config import Config
 from dog.resolver import UdpResolver, addresses
 
@@ -90,6 +92,40 @@ def test_retries_after_timeout(server):
     result = make_resolver(server, retries=1).query("example.com", "A")
     assert result.status == "NOERROR"
     assert len(server.queries) == 2
+
+
+FE80_1_PTR = "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.e.f.ip6.arpa."
+
+
+@pytest.mark.parametrize(
+    "ip, qname",
+    [
+        ("fe80::1", FE80_1_PTR),
+        # The scope (%lo) only picks an interface; the address, and so its PTR name, is the same.
+        ("fe80::1%lo", FE80_1_PTR),
+        ("fe80::1%en0", FE80_1_PTR),
+        ("fe80::1%1", FE80_1_PTR),
+        ("2001:db8::1%eth0", dns.reversename.from_address("2001:db8::1").to_text()),
+        ("192.0.2.1", "1.2.0.192.in-addr.arpa."),
+    ],
+)
+def test_reverse_strips_ipv6_scope(server, ip, qname):
+    result = make_resolver(server).reverse(ip)
+    assert result.qname == qname
+    assert server.queries[0].question[0].name.to_text() == qname
+
+
+def test_main_reverse_scoped_ipv6(server, tmp_path, monkeypatch, capsys):
+    for var in ("IPINFO_TOKEN", "DOG_NAMESERVERS", "DOG_PAYLOAD"):
+        monkeypatch.delenv(var, raising=False)
+    argv = ["--config", str(tmp_path / "nope.toml"), "--port", str(server.port), "--timeout", "0.5", "fe80::1%lo", "@127.0.0.1"]
+
+    assert cli.main(argv) == 0
+
+    out = capsys.readouterr().out
+    assert out.startswith("; <<>> dog <<>> fe80::1%lo\n")  # the target is shown as given
+    assert f";; {FE80_1_PTR} PTR: NOERROR" in out
+    assert "fe80::1%lo  bogon" in out  # ipinfo marks it locally; no request is made
 
 
 def test_addresses_deduplicates():
