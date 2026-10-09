@@ -45,7 +45,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--token", dest="ipinfo_token", help="ipinfo.io API token (default: $IPINFO_TOKEN)")
     parser.add_argument("--show-resolver", action="store_true", help="print the detected local resolver and exit")
     parser.add_argument("--json", action="store_true", help="emit JSON instead of text")
-    args = parser.parse_args(argv)
+    # Intermixed, so positionals may follow options (dog example.com --json @1.1.1.1)
+    # as with dig. Plain parse_args() only allows that from Python 3.12.
+    args = parser.parse_intermixed_args(argv)
 
     if not args.target and not args.show_resolver:
         parser.error("a target is required")
