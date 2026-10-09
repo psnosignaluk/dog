@@ -44,7 +44,19 @@ A note on payload size: the resolver also limits how much it will send over UDP.
 Supports Python 3.10 and later. Development uses the version pinned in `.python-version`.
 
 ```sh
-uv run pytest
-# check every supported version:
+uv run pytest          # tests
+uv run pytest --cov    # tests with a coverage report; fails below 90%
+uv run mypy            # strict type checking of src/
+uv run ruff check      # lint
+# tests on every supported version:
 for v in 3.10 3.11 3.12 3.13 3.14; do uv run --isolated --python $v pytest -q; done
 ```
+
+CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`:
+
+- pytest with coverage, and mypy, on Python 3.10 to 3.14 on Linux, plus 3.14 on macOS
+- pytest against the oldest dependency versions `pyproject.toml` allows
+- a build of the package, installed into a clean environment, running `dog`
+- ruff
+
+It also fails if `uv.lock` is out of date with `pyproject.toml`; run `uv lock` to fix that.

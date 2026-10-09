@@ -24,6 +24,7 @@ build-backend = "uv_build"
 dev = [
     "mypy>=2.4.0",
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "respx>=0.23.1",
     "ruff>=0.16.10",
 ]
@@ -31,6 +32,14 @@ dev = [
 [tool.mypy]
 files = ["src"]
 strict = true
+
+[tool.coverage.run]
+source = ["dog"]
+
+[tool.coverage.report]
+# Just under the current total (91%), so a drop fails CI.
+fail_under = 90
+show_missing = true
 
 [tool.ruff]
 target-version = "py310"
